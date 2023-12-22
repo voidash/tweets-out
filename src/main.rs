@@ -1,48 +1,39 @@
-use dialoguer::Input;
-use chrono::{Local, DateTime};
 use std::process::Command;
 
-struct Post{
-    date: DateTime<Local>,
-    description: String,
-}
+use sqlx::{Sqlite, Pool, sqlite::SqliteQueryResult, FromRow};
 
-fn is_command_available(command: &str) -> bool{
-    match Command::new(command).output() {
-        Ok(_) => {true},
-        Err(_) => {false}
+use anyhow::Result;
+
+mod database; 
+mod emoji;
+mod utils;
+mod posts;
+
+use database::Database;
+use posts::Post; 
+
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let db = Database::new().await.0;
+
+    let new_post = Post::interactive_input();
+
+
+    if let Some(ref path) = new_post.image_path {
+        Command::new("open")
+        .arg(path)
+        .spawn()
+        .expect("Failed to start firefox");
     }
-}
 
-fn initial_check() {
-    if !is_command_available("ripdrag") {
-        panic!("Didn't find Ripdrag, Install RipDrag first");
-    }
-}
+    Command::new("firefox")
+        .args(["--url", "twitter.com", "--url", "linkedin.com"])
+        .spawn()
+        .expect("Failed to start firefox");
 
-fn replace(mut s: &str, mut o: impl Write) -> io::Result<()> {
-    // i..j gives ":rocket:"
-    // m..n gives "rocket"
-    while let Some((i, m, n, j)) = s
-        .find(':')
-        .map(|i| (i, i + 1))
-        .and_then(|(i, m)| s[m..].find(':').map(|x| (i, m, m + x, m + x + 1)))
-    {
-        match emojis::get_by_shortcode(&s[m..n]) {
-            Some(emoji) => {
-                o.write_all(s[..i].as_bytes())?;
-                o.write_all(emoji.as_bytes())?;
-                s = &s[j..];
-            }
-            None => {
-                o.write_all(s[..n].as_bytes())?;
-                s = &s[n..];
-            }
-        }
-    }
-    o.write_all(s.as_bytes())
-}
+    println!("{:?}", new_post.insert_post(&db).await);
 
-fn main() {
-    println!("Hello, world!");
+    println!("{:?}", Post::view_posts(&db).await);
+    Ok(())
 }
