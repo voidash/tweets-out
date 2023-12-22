@@ -16,3 +16,6 @@ sqlx = { version = "0.6.2", features = ["sqlite", "runtime-tokio-native-tls"] }
 structopt = "0.3"
 tokio = { version = "1.20.0", features = ["rt", "macros"]}
 clipboard = "0.5.0"
+arboard = "3.3.0"
+config = "0.13.4"
+lazy_static = "1.4.0"

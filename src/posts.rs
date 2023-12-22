@@ -1,5 +1,6 @@
-use std::process::Command;
+use crate::utils::emojify;
 
+use serde::{Serialize,Deserialize};
 use sqlx::{Sqlite, Pool, sqlite::SqliteQueryResult, FromRow};
 
 use anyhow::Result;
@@ -9,7 +10,7 @@ use std::fs;
 
 use crate::utils::move_files;
 
-#[derive(Clone,FromRow,Debug)]
+#[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
 pub struct Post {
     pub date: i64,
     pub title: Option<String>,
@@ -87,13 +88,14 @@ impl Post {
         }
 
 
-
-
         // Return a new Post instance
         Post {
             date: current_date_i64,
-            title,
-            description,
+            title: {if let Some(txt) = title 
+                    {Some(emojify(&txt).unwrap())} 
+                else 
+                    {title}},
+            description: emojify(&description).unwrap(),
             image_path: Some(image_path.into_os_string().into_string().unwrap())    
         }
     }
