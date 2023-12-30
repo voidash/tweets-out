@@ -1,80 +1,126 @@
-use std::process::Command;
-use arboard::Clipboard;
+use clap::Parser;
 
-use std::fs;
 use anyhow::Result;
 
 mod database; 
 mod utils;
 mod posts;
+mod table;
+pub mod args;
 use config::{Config,File};
 
 use database::Database;
 use posts::Post;
 
-use crate::utils::move_files; 
+use crate::{utils::{ post_automation, handle_image, emojify}, table::draw_table}; 
 
-const CONFIG_FILE_PATH : &str = "./Post.toml";
+
+const POST_CONFIG_FILE_PATH : &str = "./Post.toml";
 
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let cli = args::Cli::parse();
+
+    println!("{:?}",cli);
+    
+
+    // check   
+    let new_post: Option<Post> = match cli.command{
+        Some(command_type) => {
+            match command_type {
+                args::Commands::Post { title, description, post_now } => {
+                    let post = Post{
+                        title,
+                        description: emojify(&description).unwrap(),
+                        posted: post_now,
+                        ..Default::default()
+                    };
+
+                    Some(post)
+                },
+                args::Commands::Interactive {} => { Some(Post::interactive_input()) },
+                args::Commands::File { path } => {
+                    
+                    let path_for_config = match path {
+                            Some(v) => v.into_os_string().into_string().unwrap().clone(), 
+                            None => String::from(POST_CONFIG_FILE_PATH) 
+                    };
+                    println!("{}", path_for_config);
+
+                    let post_configuration = Config::builder()
+                                .add_source(File::with_name(&path_for_config))
+                                .build();
+
+                    let mut new_post = Post::default();
+                    // read from file
+                    match post_configuration {
+                        Ok(conf)  => {
+                            if let Ok(mut conf) = conf.try_deserialize::<Post>() {
+                            conf.date = chrono::Utc::now().timestamp();
+                            conf.description = emojify(&conf.description).unwrap();
+
+                            if let Some(ref path) = conf.image_path {
+                                conf.image_path = Some(handle_image(&format!("{}",conf.date), Some(path)).to_str().unwrap().to_string());
+                            }
+                            new_post = conf;
+                            }
+
+                            Some(new_post)
+                        },
+                        Err(_) => {
+                            panic!("Provide the file or create Post.toml in same directory as the executable");
+                        }
+
+                    }
+                },
+            }
+        }, 
+
+        None=>{None},
+    };
+
+
     let db = Database::new().await.0;
+    match new_post {
+        Some(new_post) =>  {
+                    if new_post.posted == true {
+                        post_automation(&new_post).await;
+                    } 
 
-    let post_configuration = Config::builder()
-                .add_source(File::with_name(CONFIG_FILE_PATH))
-                .build();
+                    new_post.insert_post(&db).await?;
 
-
-    let mut new_post = Post::default();
-
-    match post_configuration {
-        Ok(conf)  => {
-            if let Ok(mut conf) = conf.try_deserialize::<Post>() {
-                conf.date = chrono::Utc::now().timestamp();
-
-            if let Some(ref path) = conf.image_path {
-                let crate_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-                let image_path = std::path::Path::new(&crate_dir).join("images").join(conf.date.to_string());
-
-
-                fs::create_dir(&image_path).expect("Failed to create directory");
-                move_files(path,&image_path.clone().into_os_string().into_string().unwrap()).unwrap();
-
-                conf.image_path = Some(image_path.into_os_string().into_string().unwrap());
-            }
-            new_post = conf;
-            }
-        },
-        Err(_) => {
-            new_post = Post::interactive_input();
         }
-    }
 
+        None => {
+            // check if users want to view all posts
+            if cli.list_all {
+                println!("{:#?}", Post::view_posts(&db).await?);
+            }else if cli.list_unposted {
+                println!("{:#?}", Post::view_unposted_posts(&db).await?);
+            }
 
-    if let Some(ref path) = new_post.image_path {
-        Command::new("open")
-        .arg(path)
-        .spawn()
-        .expect("Error opening the file explorer");
-    }
+            if cli.post_unposted {
+                let unposted_posts = Post::view_unposted_posts(&db).await?;
+                let (selected_state, mode) = draw_table(&unposted_posts).unwrap();
 
-    Command::new("firefox")
-        .args(["--url", "twitter.com", "--url", "linkedin.com"])
-        .spawn()
-        .expect("Failed to start firefox");
+               let selected_post = &unposted_posts[selected_state.selected().unwrap()];
+                match mode {
 
+                    table::Mode::Select => {
+                       Post::update_post(&db, selected_post.date).await?;
+                       post_automation(&selected_post).await;
+                    },
 
+                    table::Mode::Delete => {
+                       Post::delete_post(&db, selected_post.date).await?;
+                    },
 
-    println!("{:?}", new_post.insert_post(&db).await);
+                    table::Mode::Default => {},
+                }
+            }
+        }
+    } 
 
-    let mut clipboard = Clipboard::new().unwrap();
-    match new_post.title {
-        Some(txt) => clipboard.set_text(format!("{} \n {}",txt, new_post.description )).unwrap(),
-        None => clipboard.set_text(format!("{}",new_post.description)).unwrap()
-    }
-
-
-    println!("{:?}", Post::view_posts(&db).await);
     Ok(())
 }

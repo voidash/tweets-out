@@ -1,23 +1,12 @@
+use std::path::PathBuf;
 use std::process::Command;
 use std::io::*;
 use std::fs;
 
+use arboard::Clipboard;
 
-pub fn initial_check() {
-    if !match Command::new("ripdrag").arg("h").output() {
-        Ok(_) => true,
-        Err(_) => false,
-    } {
-        panic!("Didn't find Ripdrag, Install RipDrag first");
-    }
+use crate::posts::Post;
 
-    if !match Command::new("firefox").arg("-h").output() {
-        Ok(_) => true,
-        Err(_) => false,
-    } {
-        panic!("Other ungodly browsers are not supported");
-    }
-}
 
 pub fn move_files(source_folder: &str, destination_folder: &str) -> std::io::Result<()> {
     // Read the contents of the source folder
@@ -63,3 +52,41 @@ pub fn emojify(mut s: &str) -> Result<String> {
 
     Ok(std::str::from_utf8(&o).unwrap().to_string())
 }
+
+pub async fn post_automation(new_post: &Post) {
+    if let Some(ref path) = new_post.image_path {
+        Command::new("open")
+        .arg(path)
+        .spawn()
+        .expect("Error opening the file explorer");
+    }
+
+    Command::new("firefox")
+        .args(["--url", "twitter.com/compose/tweet", "--url", "linkedin.com"])
+        .spawn()
+        .expect("Failed to start firefox");
+
+
+
+
+    let mut clipboard = Clipboard::new().unwrap();
+    match &new_post.title {
+        Some(txt) => clipboard.set_text(format!("{} \n {} \n #{}",txt, new_post.description,new_post.date )).unwrap(),
+        None => clipboard.set_text(format!("{} \n #{}",new_post.description, new_post.date)).unwrap()
+    }
+
+}
+
+pub fn handle_image(image_name: &str,fetch_image: Option<&str>) -> PathBuf{
+    let crate_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let image_path = std::path::Path::new(&crate_dir).join("images").join(image_name);
+    fs::create_dir(&image_path).expect("Failed to create directory");
+
+    if let Some(image_to_fetch_from) = fetch_image {
+        move_files(&image_to_fetch_from,&image_path.clone().into_os_string().into_string().unwrap()).unwrap();
+    }
+
+    image_path
+}
+
+
